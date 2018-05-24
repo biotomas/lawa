@@ -3,120 +3,189 @@
 * Author: Tomas Balyo (tomas.balyo@kit.edu)
 * Karlsruhe Institure of Technology
 */
-#include <stdio.h>
-#include <ctype.h>
-#include <vector>
-#include <cmath>
+
+#include "lawa.h"
+#include <cstdio>
 #include <cstdlib>
+#include <unordered_set>
 
-using namespace std;
-
-#define ISTRUE(lit) (tvalues[abs(lit)]==lit)
-
-int numVariables;
-int numClauses;
-int* tvalues;
-char* satLits;
-
-struct Clause {
-    int numLits;
-    int* lits;
-};
-
-Clause* clauses;
-
-vector<int>* posOccList;
-vector<int>* negOccList;
-vector<int> unsatClauseIds;
-
+Clause makeClause(vector<int> lits) {
+    Clause c;
+    c.lits = lits;
+    return c;
+}
 
 void printClause(const Clause& cls) {
-    for (int li = 0; li < cls.numLits; li++) {
+    for (int li = 0; li < cls.lits.size(); li++) {
         printf("%d ", cls.lits[li]);
     }
     printf("0 \n");
 }
 
-void printModel() {
+int Lawa::computeMakeScore(int lit) {
+    int score = 0;
+    vector<int>& occList = lit > 0 ? posOccList[lit] : negOccList[-lit];
+    for (int cid : occList) {
+        if (clauses[cid].satLits == 0) {
+            score++;
+        }
+    }
+    return score;
+}
+
+int Lawa::computeBreakScore(int lit) {
+    int score = 0;
+    vector<int>& occList = lit > 0 ? negOccList[lit] : posOccList[-lit];
+    for (int cid : occList) {
+        if (clauses[cid].satLits == 1) {
+            score++;
+        }
+    }
+    return score;
+}
+
+void Lawa::flipLiteral(int lit) {
+    int var = abs(lit);
+    vector<int>& decOccList = lit > 0 ? negOccList[var] : posOccList[var];
+    vector<int>& incOccList = lit > 0 ? posOccList[var] : negOccList[var];
+
+    for (int cid : decOccList) {
+        clauses[cid].satLits--;
+        if (clauses[cid].satLits == 0) {
+            unsatClauseIds.push_back(cid);
+        }
+    }
+    for (int cid : incOccList) {
+        clauses[cid].satLits++;
+    }
+
+    tvalues[var] = lit;
+}
+
+void Lawa::deallocateMemory() {
+    if (tvalues != nullptr) {
+        delete[] tvalues;
+        delete[] posOccList;
+        delete[] negOccList;
+    }
+}
+
+void Lawa::addLiteral(int lit) {
+    int var = abs(lit);
+    if (var > numVariables) {
+        numVariables = var;
+    }
+    if (lit == 0) {
+        clauses.push_back(makeClause(currentAddedClause));
+        currentAddedClause.clear();
+    } else {
+        currentAddedClause.push_back(lit);
+    }
+    clausesAdded = true;
+}
+
+void Lawa::addAssumption(int lit) {
+    assumptions.push_back(lit);
+}
+
+int Lawa::getValue(int lit) {
+    return tvalues[abs(lit)];
+}
+
+void Lawa::printModel() {
     for (int var = 1; var <= numVariables; var++) {
         printf("%d ", tvalues[var]);
     }
     printf("\n");
 }
 
-void printDebug() {
-    for (int ci = 0; ci < numClauses; ci++) {
+void Lawa::printDebug() {
+    for (int ci = 0; ci < clauses.size(); ci++) {
         printf("%d: ",ci);
         printClause(clauses[ci]);
     }
     printModel();
 }
 
+Lawa::~Lawa() {
+    deallocateMemory();
+}
 
-void initializeSearch() {
-    tvalues = new int[numVariables+1];
-    satLits = new char[numClauses];
+bool Lawa::initializeSearch() {
+    if (clausesAdded) {
+        deallocateMemory();
+        tvalues = new int[numVariables+1];
+        posOccList = new vector<int>[1+numVariables];
+        negOccList = new vector<int>[1+numVariables];
+
+        // compute occurrence lists
+        for (int ci = 0; ci < clauses.size(); ci++) {
+            for (int li = 0; li < clauses[ci].lits.size(); li++) {
+                int lit = clauses[ci].lits[li];
+                int var = abs(lit);
+                if (lit > 0) {
+                    posOccList[var].push_back(ci);
+                } else {
+                    negOccList[var].push_back(ci);
+                }
+            }
+        }
+    }
+    clausesAdded = false;
 
     for (int var = 1; var <= numVariables; var++) {
         tvalues[var] = rand()%2 == 0 ? var : -var;
     }
 
-    for (int ci = 0; ci < numClauses; ci++) {
+    unordered_set<int> lockedVariables;
+    for (int lit : assumptions) {
+        int var = abs(lit);
+        tvalues[var] = lit;
+        lockedVariables.insert(var);
+    }
+    assumptions.clear();
+
+    for (int ci = 0; ci < clauses.size(); ci++) {
         Clause& cls = clauses[ci];
-	char slits = 0;
-        for (int li = 0; li < cls.numLits; li++) {
-            int lit = clauses[ci].lits[li];
-            if (ISTRUE(lit))
-                slits++;
+
+        vector<int> lockedLits;
+        vector<int> freeLits;
+        for (int lit : cls.lits) {
+            if (lockedVariables.count(abs(lit))) {
+                lockedLits.push_back(lit);
+            } else {
+                freeLits.push_back(lit);
+            }
         }
-        if (slits == 0) {
+        cls.flippableLits = freeLits.size();
+        cls.lits = freeLits;
+        cls.lits.insert(cls.lits.end(), lockedLits.begin(), lockedLits.end());
+
+        int satLits = 0;
+        for (int lit : cls.lits) {
+            if (ISTRUE(lit))
+                satLits++;
+        }
+        if (cls.flippableLits == 0 && satLits == 0) {
+            // unsatisfiable formula
+            return false;
+        }
+        if (satLits == 0) {
             unsatClauseIds.push_back(ci);
         }
-	satLits[ci]=slits;
+        cls.satLits = satLits;
     }
+    return true;
 }
 
-int computeMakeScore(int lit) {
-    int score = 0;
-    vector<int>& occList = lit > 0 ? posOccList[lit] : negOccList[-lit];
-    for (int cid : occList) {
-        if (satLits[cid] == 0) {
-            score++;
-        }
-    }
-    return score;
+bool Lawa::unitPropagation() {
+    //TODO
 }
 
-int computeBreakScore(int lit) {
-    int score = 0;
-    vector<int>& occList = lit > 0 ? negOccList[lit] : posOccList[-lit];
-    for (int cid : occList) {
-        if (satLits[cid] == 1) {
-            score++;
-        }
+bool Lawa::search() {
+    if (!initializeSearch()) {
+        return false;
     }
-    return score;
-}
-
-void flipLiteral(int lit) {
-    int var = abs(lit);
-    vector<int>& decOccList = lit > 0 ? negOccList[var] : posOccList[var];
-    vector<int>& incOccList = lit > 0 ? posOccList[var] : negOccList[var];
-
-    for (int cid : decOccList) {
-        satLits[cid]--;
-        if (satLits[cid] == 0) {
-            unsatClauseIds.push_back(cid);
-        }
-    }
-    for (int cid : incOccList) {
-        satLits[cid]++;
-    }
-
-    tvalues[var] = lit;
-}
-
-void search() {
     unsigned long round = 0;
     while (unsatClauseIds.size() > 0) {
         round++;
@@ -126,19 +195,24 @@ void search() {
         unsatClauseIds[usidid] = unsatClauseIds.back();
         unsatClauseIds.pop_back();
         Clause& cls = clauses[usid];
-        if (satLits[usid] > 0) {
+        if (cls.satLits > 0) {
             continue;
         }
         //printf("c will satisfy clause ");
         //printClause(cls);
 
-        int id1 = rand() % cls.numLits;
-        int id2 = rand() % cls.numLits;
-        while(id1 == id2) {
-            id1 = rand() % cls.numLits;
-            id2 = rand() % cls.numLits;
+        if (cls.flippableLits == 1) {
+            flipLiteral(cls.lits[0]);
+            continue;
         }
-        int lit1 = cls.lits[id1]; 
+
+        int id1 = rand() % cls.flippableLits;
+        int id2 = rand() % cls.flippableLits;
+        while(id1 == id2) {
+            id1 = rand() % cls.flippableLits;
+            id2 = rand() % cls.flippableLits;
+        }
+        int lit1 = cls.lits[id1];
         int lit2 = cls.lits[id2];
 
         int score1 = computeMakeScore(lit1) - computeBreakScore(lit1);// - flippedCount[abs(lit1)];
@@ -155,112 +229,5 @@ void search() {
         }
     }
     printf("c searched finished after %lu rounds.\n", round);
-}
-
-
-void makeOccurrenceLists() {
-    posOccList = new vector<int>[1+numVariables];
-    negOccList = new vector<int>[1+numVariables];
-    for (int ci = 0; ci < numClauses; ci++) {
-        for (int li = 0; li < clauses[ci].numLits; li++) {
-            int lit = clauses[ci].lits[li];
-            int var = abs(lit);
-            if (lit > 0) {
-                posOccList[var].push_back(ci);
-            } else {
-                negOccList[var].push_back(ci);
-            }
-        }
-    }
-}
-
-int readNextNumber(FILE* f, int c) {
-    while (!isdigit(c)) {
-        c = fgetc(f);
-    }
-    int num = 0;
-    while (isdigit(c)) {
-        num = num*10 + (c-'0');
-        c = fgetc(f);
-    }
-    return num;
-}
-
-void readLine(FILE* f) {
-    int c = fgetc(f);
-    while(c != '\n') {
-        c = fgetc(f);
-    }
-}
-
-bool loadSatProblem(const char* filename) {
-    FILE* f = fopen(filename, "r");
-    if (f == NULL) {
-        return false;
-    }
-    int c = 0;
-    bool neg = false;
-    int clauseInd = 0;
-    vector<int> tmpClause;
-    while (c != EOF) {
-        c = fgetc(f);
-
-        // comment line
-        if (c == 'c') {
-            readLine(f);
-            continue;
-        }
-        // problem lines
-        if (c == 'p') {
-            numVariables = readNextNumber(f, 0);
-            numClauses = readNextNumber(f, c);
-            clauses = new Clause[numClauses];
-            continue;
-        }
-        // whitespace
-        if (isspace(c)) {
-            continue;
-        }
-        // negative
-        if (c == '-') {
-            neg = true;
-            continue;
-        }
-
-        // number
-        if (isdigit(c)) {
-            int num = readNextNumber(f, c);
-            if (neg) {
-                num *= -1;
-            }
-            neg = false;
-            if (num == 0) {
-                clauses[clauseInd].numLits = tmpClause.size();
-                clauses[clauseInd].lits = new int[tmpClause.size()];
-                for (size_t i = 0; i < tmpClause.size(); i++)
-                    clauses[clauseInd].lits[i] = tmpClause[i];
-                tmpClause.clear();
-                clauseInd++;
-            } else {
-                tmpClause.push_back(num);
-            }
-        }
-    }
-    fclose(f);
     return true;
-}
-
-int main(int argc, char** argv) {
-    printf("c This is lawa - lazy walksat local search satisfiability solver\n");
-    printf("c USAGE: ./lawa <cnf-formula-in-dimacs-format>\n");
-    if (!loadSatProblem(argv[1])) {
-        printf("ERROR: problem not loaded\n");
-        return 1;
-    }
-    srand(2018);
-    makeOccurrenceLists();
-    initializeSearch();
-    search();
-    printf("s SATISFIABLE\nv ");
-    printModel();
 }
