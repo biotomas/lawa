@@ -35,6 +35,9 @@ private:
     bool clausesAdded = true;
     vector<int> assumptions;
 
+    int (*terminateCallback)(void* state) = nullptr;
+    void* terminateCallbackData = nullptr;
+
     int computeMakeScore(int lit);
     int computeBreakScore(int lit);
     void flipLiteral(int lit);
@@ -48,7 +51,8 @@ public:
     void addAssumption(int lit);
     int getValue(int lit);
     void printModel();
-    bool search();
+    int search();
+    void setupTerminateCallback(void * state, int (*terminate)(void * state));
     ~Lawa();
 };
 

@@ -32,8 +32,7 @@ void ipasir_assume (void * solver, int lit) {
 
 int ipasir_solve (void * solver) {
     Lawa* lawa = (Lawa*)solver;
-    bool sat = lawa->search();
-    return sat ? 10 : 20;
+    return lawa->search();
 }
 
 int ipasir_val (void * solver, int lit) {
@@ -47,7 +46,8 @@ int ipasir_failed (void * solver, int lit) {
 }
 
 void ipasir_set_terminate (void * solver, void * state, int (*terminate)(void * state)) {
-    //TODO
+    Lawa* lawa = (Lawa*)solver;
+    lawa->setupTerminateCallback(state, terminate);
 }
 
 void ipasir_set_learn (void * solver, void * state, int max_length, void (*learn)(void * state, int * clause)) {

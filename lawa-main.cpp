@@ -24,7 +24,7 @@ int main(int argc, char** argv) {
         lawa.addAssumption(atoi(argv[i]));
     }
     srand(2018);
-    if (lawa.search()) {
+    if (lawa.search() == 10) {
         printf("s SATISFIABLE\nv ");
         lawa.printModel();
     } else {

@@ -182,12 +182,17 @@ bool Lawa::unitPropagation() {
     //TODO
 }
 
-bool Lawa::search() {
+int Lawa::search() {
     if (!initializeSearch()) {
-        return false;
+        return 20;
     }
     unsigned long round = 0;
     while (unsatClauseIds.size() > 0) {
+        if (terminateCallback != nullptr) {
+            if (terminateCallback(terminateCallbackData)) {
+                return 0;
+            }
+        }
         round++;
         //printf("c round %lu, unsat clauses: %lu\n", round, unsatClauseIds.size());
         int usidid = rand() % unsatClauseIds.size();
@@ -229,5 +234,11 @@ bool Lawa::search() {
         }
     }
     printf("c searched finished after %lu rounds.\n", round);
-    return true;
+    return 10;
 }
+
+void Lawa::setupTerminateCallback(void * state, int (*terminate)(void * state)) {
+    terminateCallback = terminate;
+    terminateCallbackData = state;
+}
+
